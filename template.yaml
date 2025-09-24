@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  mail-service
+  Sample SAM Template for mail-service
+
+Parameters:
+  FromMail:
+    Type: String
+    Default: no-reply@example.com
+    Description: "Email address to send emails from"
+  ServiceTag:
+    Type: String
+    Default: ServerlessMailService
+    Description: "Tag to identify this service"
+  StageName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: "Stage name for this deployment"
+
+Resources:
+
+  MailServiceApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      Cors:
+        AllowMethods: "'POST,OPTIONS'"
+        AllowHeaders: "Content-Type,X-Api-Key"
+        AllowOrigin: "*"
+      Tags:
+        Service: !Ref ServiceTag
+
+  ProcessMailQueueFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+        - arm64
+      Events:
+        ScheduleEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+      Tags:
+        Service: !Ref ServiceTag
+      Timeout: 30
+      MemorySize: 128
+    Metadata:
+      DockerTag: latest
+      DockerContext: ./process-mail-queue
+      Dockerfile: Dockerfile
+
+  ReceiveMailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+        - arm64
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /mail
+            Method: POST
+            RestApiId: !Ref MailServiceApi
+      Timeout: 5
+      MemorySize: 128
+      Tags:
+        Service: !Ref ServiceTag
+      Environment:
+        Variables:
+          FROM_EMAIL: !Ref FromMail
+    Metadata:
+      DockerTag: latest
+      DockerContext: ./receive-mail
+      Dockerfile: Dockerfile
+
+  MailQueue:  
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ServiceTag}-MailQueue-${StageName}"
+      VisibilityTimeout: 45
+      Tags:
+        - Key: Service
+          Value: !Ref ServiceTag
