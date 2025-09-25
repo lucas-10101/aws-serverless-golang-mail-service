@@ -1,0 +1,13 @@
+{
+    "Subject": "Test Email",
+    "Body": "This is a test email.",
+    "To": [
+        "to@example.local"
+    ],
+    "Cc": [
+        "cc@example.local"
+    ],
+    "Bcc": [
+        "bcc@example.local"
+    ]
+}
