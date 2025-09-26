@@ -1,13 +1,4 @@
 {
-    "Subject": "Test Email",
-    "Body": "This is a test email.",
-    "To": [
-        "to@example.local"
-    ],
-    "Cc": [
-        "cc@example.local"
-    ],
-    "Bcc": [
-        "bcc@example.local"
-    ]
+  "body": "{\"Subject\": \"Test Email\", \"Body\": \"This is a test email.\", \"To\": [\"to@example.local\"], \"Cc\": [\"cc@example.local\"], \"Bcc\": [\"bcc@example.local\"]}",
+  "isBase64Encoded": false
 }

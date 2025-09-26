@@ -39,7 +39,7 @@ Resources:
     Properties:
       PackageType: Image
       Architectures:
-        - arm64
+        - x86_64
       Events:
         ScheduleEvent:
           Type: Schedule
@@ -59,7 +59,7 @@ Resources:
     Properties:
       PackageType: Image
       Architectures:
-        - arm64
+        - x86_64
       Events:
         ApiEvent:
           Type: Api

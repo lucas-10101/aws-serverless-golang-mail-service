@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -31,6 +32,7 @@ type MailRequest struct {
 
 func validateMailRequest(mail *MailRequest) error {
 	if mail.Subject == "" || mail.Body == "" || len(mail.To) == 0 || len(mail.Cc) == 0 || len(mail.Bcc) == 0 {
+		log.Printf("Invalid MailRequest")
 		return errors.New("all MailRequest fields must be filled")
 	}
 	return nil
@@ -43,6 +45,7 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 
 	payload, err = getPayload(request)
 	if err != nil {
+		log.Printf("Error getting payload: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       err.Error(),
@@ -50,6 +53,7 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	}
 
 	if err = validateMailRequest(payload); err != nil {
+		log.Printf("Invalid mail request: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusBadRequest,
 			Body:       err.Error(),
@@ -58,17 +62,20 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 
 	config, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
+		log.Printf("Error loading AWS config: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       err.Error(),
 		}, nil
 	}
 
+	config.Region = os.Getenv("MAIL_QUEUE_REGION")
 	sqsClient := sqs.NewFromConfig(config)
 	queueURL := os.Getenv("MAIL_QUEUE_URL")
 
 	messageId, err := enqueueMailMessage(ctx, sqsClient, queueURL, payload)
 	if err != nil {
+		log.Printf("Error enqueuing mail message: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       err.Error(),
@@ -85,6 +92,7 @@ func enqueueMailMessage(ctx context.Context, sqsClient *sqs.Client, queueURL str
 
 	jsonData, err := json.Marshal(mailRequest)
 	if err != nil {
+		log.Printf("Error marshaling mail request to JSON: %v", err)
 		return nil, err
 	}
 
@@ -97,6 +105,7 @@ func enqueueMailMessage(ctx context.Context, sqsClient *sqs.Client, queueURL str
 	})
 
 	if err != nil {
+		log.Printf("Error sending message to SQS: %v", err)
 		return nil, err
 	}
 
@@ -111,11 +120,13 @@ func getPayload(request events.APIGatewayProxyRequest) (*MailRequest, error) {
 
 	body, err = getBodyBytes(request)
 	if err != nil {
+		log.Printf("Error getting body bytes: %v", err)
 		return nil, err
 	}
 
 	err = json.Unmarshal(body, &payload)
 	if err != nil {
+		log.Printf("Error unmarshaling JSON body: %v", err)
 		return nil, err
 	}
 	body = nil
@@ -128,14 +139,22 @@ func getBodyBytes(request events.APIGatewayProxyRequest) ([]byte, error) {
 	var data []byte
 	var err error
 
+	if request.Body == "" {
+		log.Printf("Empty body in request")
+		return nil, errors.New("empty body")
+	}
+
 	if request.IsBase64Encoded {
 		data, err = base64.StdEncoding.DecodeString(request.Body)
 		if err != nil {
+			log.Printf("Error decoding base64 body: %v", err)
 			return nil, err
 		}
 	}
 
-	if content, isPresent := request.Headers[""]; isPresent && content == "gzip" {
+	if content, isPresent := request.Headers["Content-Encoding"]; isPresent && content == "gzip" {
+
+		log.Printf("Decompressing gzip body")
 
 		if data == nil {
 			data = []byte(request.Body)
@@ -143,14 +162,20 @@ func getBodyBytes(request events.APIGatewayProxyRequest) ([]byte, error) {
 
 		gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 		if err != nil {
+			log.Printf("Error creating gzip reader: %v", err)
 			return nil, err
 		}
 		defer gzipReader.Close()
 
 		data, err = io.ReadAll(gzipReader)
 		if err != nil {
+			log.Printf("Error reading gzip body: %v", err)
 			return nil, err
 		}
+	}
+
+	if data == nil {
+		data = []byte(request.Body)
 	}
 
 	return data, err
@@ -159,30 +184,48 @@ func getBodyBytes(request events.APIGatewayProxyRequest) ([]byte, error) {
 func readEnvFile() {
 	file, err := os.Open(".env")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error opening .env file: %v", err)
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		lineSplit := strings.SplitAfterN(line, "=", 2)
+
+		lineSplit := strings.Split(line, "=")
+
+		if len(lineSplit) != 2 {
+			continue
+		}
+
 		key := strings.TrimSpace(lineSplit[0])
 		value := strings.TrimSpace(lineSplit[1])
 
 		if err := os.Setenv(key, value); err != nil {
-			log.Fatal(err)
+			log.Fatalf("Error setting environment variable %q: %v", key, err)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error reading .env file: %v", err)
 	}
 }
 
 func main() {
 
 	readEnvFile()
+
+	fmt.Println("DEBUG:", os.Getenv("DEBUG"))
+
+	if os.Getenv("DEBUG") != "true" {
+		descriptor, err := os.Open(os.DevNull)
+		if err != nil {
+			log.Println("Unable to open null device:", err)
+		}
+		log.SetOutput(descriptor)
+	} else {
+		log.SetOutput(os.Stdout)
+	}
 
 	lambda.Start(handler)
 }
