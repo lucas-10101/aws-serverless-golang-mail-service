@@ -14,10 +14,7 @@ A infraestrutura é definida no arquivo `template.yaml` utilizando AWS SAM, incl
 ## Estrutura do Projeto
 
 ```
-├── process-mail-queue/
-│   ├── main.go
-│   ├── go.mod
-│   └── Dockerfile
+├── process-mail-queue/ (adicionado futuramente)
 ├── receive-mail/
 │   ├── main.go
 │   ├── go.mod
@@ -49,24 +46,11 @@ MAIL_QUEUE_URL=https://sqs.re-gion-00.amazonaws.com/account-id/queue-name
 DEBUG=(true|false)
 ```
 
-3. Construa as imagens Docker:
-
-```bash
-cd receive-mail && docker build -t receive-mail .
-cd ../process-mail-queue && docker build -t process-mail-queue .
-```
-
-4. Execute os containers localmente (ajuste as variáveis conforme necessário):
-
-```bash
-docker run --env-file .env receive-mail
-docker run process-mail-queue
-```
-
 5. Para testar a API localmente com o SAM:
 
 ```bash
-sam local start-api
+sam build
+sam local start-api ou sam local invoke ReceiveMailFunction -e ./receive-mail/event.json
 ```
 
 Acesse: http://localhost:3000/mail
