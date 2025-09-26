@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   mail-service
@@ -22,21 +22,22 @@ Parameters:
     Description: "Stage name for this deployment"
 
 Resources:
-
   MailServiceApi:
     Type: AWS::Serverless::Api
     Properties:
+      Name: MailServiceApi
       StageName: !Ref StageName
       Cors:
-        AllowMethods: "'POST,OPTIONS'"
-        AllowHeaders: "Content-Type,X-Api-Key"
-        AllowOrigin: "*"
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
       Tags:
         Service: !Ref ServiceTag
 
   ProcessMailQueueFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub "${ServiceTag}-ProcessMailQueueFunction-${StageName}"
       PackageType: Image
       Architectures:
         - x86_64
@@ -57,6 +58,7 @@ Resources:
   ReceiveMailFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub "${ServiceTag}-ReceiveMailFunction-${StageName}"
       PackageType: Image
       Architectures:
         - x86_64
@@ -66,7 +68,7 @@ Resources:
           Properties:
             Path: /mail
             Method: POST
-            RestApiId: !Ref MailServiceApi
+            RestApiId: MailServiceApi
       Timeout: 5
       MemorySize: 128
       Tags:
@@ -79,7 +81,7 @@ Resources:
       DockerContext: ./receive-mail
       Dockerfile: Dockerfile
 
-  MailQueue:  
+  MailQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "${ServiceTag}-MailQueue-${StageName}"

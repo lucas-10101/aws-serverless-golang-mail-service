@@ -46,27 +46,18 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	payload, err = getPayload(request)
 	if err != nil {
 		log.Printf("Error getting payload: %v", err)
-		return events.APIGatewayProxyResponse{
-			StatusCode: http.StatusInternalServerError,
-			Body:       err.Error(),
-		}, nil
+		return createJsonProxyResponse(http.StatusBadRequest, err.Error()), nil
 	}
 
 	if err = validateMailRequest(payload); err != nil {
 		log.Printf("Invalid mail request: %v", err)
-		return events.APIGatewayProxyResponse{
-			StatusCode: http.StatusBadRequest,
-			Body:       err.Error(),
-		}, nil
+		return createJsonProxyResponse(http.StatusBadRequest, err.Error()), nil
 	}
 
 	config, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Printf("Error loading AWS config: %v", err)
-		return events.APIGatewayProxyResponse{
-			StatusCode: http.StatusInternalServerError,
-			Body:       err.Error(),
-		}, nil
+		return createJsonProxyResponse(http.StatusInternalServerError, err.Error()), nil
 	}
 
 	config.Region = os.Getenv("MAIL_QUEUE_REGION")
@@ -76,16 +67,10 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	messageId, err := enqueueMailMessage(ctx, sqsClient, queueURL, payload)
 	if err != nil {
 		log.Printf("Error enqueuing mail message: %v", err)
-		return events.APIGatewayProxyResponse{
-			StatusCode: http.StatusInternalServerError,
-			Body:       err.Error(),
-		}, nil
+		return createJsonProxyResponse(http.StatusInternalServerError, err.Error()), nil
 	}
 
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       "Message enqueued with ID: " + *messageId,
-	}, nil
+	return createJsonProxyResponse(http.StatusOK, fmt.Sprintf("Message enqueued with ID: %s", *messageId)), nil
 }
 
 func enqueueMailMessage(ctx context.Context, sqsClient *sqs.Client, queueURL string, mailRequest *MailRequest) (*string, error) {
@@ -208,6 +193,33 @@ func readEnvFile() {
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading .env file: %v", err)
+	}
+}
+
+func createJsonProxyResponse(status int, body string) events.APIGatewayProxyResponse {
+
+	jsonBody, err := json.Marshal(map[string]string{
+		"message": body,
+	})
+	if err != nil {
+		log.Printf("Error marshaling JSON response body: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			Body: fmt.Sprintf(`{"message": "%s"}`, err.Error()),
+		}
+	}
+
+	body = string(jsonBody)
+
+	return events.APIGatewayProxyResponse{
+		StatusCode: status,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+		Body: body,
 	}
 }
 
