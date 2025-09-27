@@ -31,9 +31,9 @@ type MailRequest struct {
 }
 
 func validateMailRequest(mail *MailRequest) error {
-	if mail.Subject == "" || mail.Body == "" || len(mail.To) == 0 || len(mail.Cc) == 0 || len(mail.Bcc) == 0 {
+	if (mail.Subject == "" || mail.Body == "") || (len(mail.To) == 0 && len(mail.Cc) == 0 && len(mail.Bcc) == 0) {
 		log.Printf("Invalid MailRequest")
-		return errors.New("all MailRequest fields must be filled")
+		return errors.New("required MailRequest fields must be filled (Subject, Body, To/Cc/Bcc)")
 	}
 	return nil
 }

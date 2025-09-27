@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,7 @@ type MailRequest struct {
 type ExecutionConfig struct {
 	Region                 string
 	FromMail               string
-	MailsPerSecond         time.Duration
+	EmailRateInterval      time.Duration
 	QueueURL               string
 	MaxExecutionTime       time.Duration
 	QueueVisibilityTimeout time.Duration
@@ -92,7 +93,6 @@ func handler() error {
 	go startReadMessagesReadHandler(ctx, sqsClient, communicationBus, execConfig)
 
 	communicationBus.MainWorkerGroup.Wait()
-	close(communicationBus.Errors)
 
 	return nil
 }
@@ -108,28 +108,31 @@ func startErrorListener(communicationBus *CommunicationBus) {
 
 func getExecutionConfigFromEnv() (*ExecutionConfig, error) {
 
+	var exists bool
 	var region string
 	var fromMail string
-	var mailsPerSecond time.Duration
+	var emailRateInterval time.Duration
 	var queueURL string
 	var maxExecutionTime time.Duration
 
-	if region, exists := os.LookupEnv("MAIL_QUEUE_REGION"); !exists || region == "" {
+	if region, exists = os.LookupEnv("MAIL_QUEUE_REGION"); !exists || region == "" {
 		return nil, fmt.Errorf("environment variable MAIL_QUEUE_REGION is not set or empty")
 	}
 
-	if fromMail, exists := os.LookupEnv("MAIL_FROM_ADDRESS"); !exists || fromMail == "" {
+	if fromMail, exists = os.LookupEnv("MAIL_FROM_ADDRESS"); !exists || fromMail == "" {
 		return nil, fmt.Errorf("environment variable MAIL_FROM_ADDRESS is not set or empty")
 	}
 
 	if mailsPerSecondStr, exists := os.LookupEnv("MAILS_PER_SECOND"); !exists || mailsPerSecondStr == "" {
 		return nil, fmt.Errorf("environment variable MAILS_PER_SECOND is not set or empty")
 	} else {
-		var err error
-		mailsPerSecond, err = time.ParseDuration(mailsPerSecondStr)
+
+		mailsPerSecond, err := strconv.Atoi(mailsPerSecondStr)
 		if err != nil || mailsPerSecond <= 0 {
 			return nil, fmt.Errorf("invalid value for MAILS_PER_SECOND: %v", err)
 		}
+
+		emailRateInterval = time.Second / time.Duration(mailsPerSecond)
 	}
 
 	if maxExecutionTimeStr, exists := os.LookupEnv("FUNCTION_MAX_EXECUTION_TIME"); !exists || maxExecutionTimeStr == "" {
@@ -142,14 +145,14 @@ func getExecutionConfigFromEnv() (*ExecutionConfig, error) {
 		}
 	}
 
-	if queueURL, exists := os.LookupEnv("MAIL_QUEUE_URL"); !exists || queueURL == "" {
+	if queueURL, exists = os.LookupEnv("MAIL_QUEUE_URL"); !exists || queueURL == "" {
 		return nil, fmt.Errorf("environment variable MAIL_QUEUE_URL is not set or empty")
 	}
 
 	return &ExecutionConfig{
 		Region:                 region,
 		FromMail:               fromMail,
-		MailsPerSecond:         mailsPerSecond,
+		EmailRateInterval:      emailRateInterval,
 		QueueURL:               queueURL,
 		MaxExecutionTime:       maxExecutionTime,
 		QueueVisibilityTimeout: maxExecutionTime + 5,
@@ -177,8 +180,8 @@ func startQueueMessagesCollector(ctx context.Context, sqsClient *sqs.Client, exe
 				WaitTimeSeconds:     5,
 			})
 			if err != nil {
-				log.Printf("Error receiving messages from SQS: %v", err)
-				communicationBus.Errors <- err
+				log.Println("Error receiving messages from SQS !!!!:", err)
+				communicationBus.Errors <- fmt.Errorf("error receiving messages from SQS: %w", err)
 				return
 			}
 
@@ -197,6 +200,7 @@ func startQueueMessagesCollector(ctx context.Context, sqsClient *sqs.Client, exe
 func startReadMessagesReadHandler(ctx context.Context, sqsClient *sqs.Client, communicationBus *CommunicationBus, execConfig *ExecutionConfig) {
 	go func() {
 		defer communicationBus.MainWorkerGroup.Done()
+		defer close(communicationBus.Errors)
 		for readMessage := range communicationBus.ReadMessages {
 			_, err := sqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      aws.String(execConfig.QueueURL),
@@ -212,14 +216,12 @@ func startReadMessagesReadHandler(ctx context.Context, sqsClient *sqs.Client, co
 func decodeBase64MessageBodyToMailRequest(messageBody string) (*MailRequest, error) {
 	decodedData, err := base64.StdEncoding.DecodeString(messageBody)
 	if err != nil {
-		log.Printf("Error decoding base64 message body: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("error decoding base64 message body: %v", err)
 	}
 
 	var mailRequest MailRequest
 	if err := json.Unmarshal(decodedData, &mailRequest); err != nil {
-		log.Printf("Error unmarshalling decoded data to MailRequest: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("error unmarshalling decoded data to MailRequest: %v", err)
 	}
 
 	return &mailRequest, nil
@@ -229,7 +231,7 @@ func startMailerHandler(ctx context.Context, sesClient *sesv2.Client, communicat
 	defer communicationBus.MainWorkerGroup.Done()
 	defer close(communicationBus.ReadMessages)
 
-	limiter := rate.NewLimiter(rate.Every(execConfig.MailsPerSecond), 1)
+	limiter := rate.NewLimiter(rate.Every(execConfig.EmailRateInterval), 1)
 	waitGroup := &sync.WaitGroup{}
 
 	for message := range communicationBus.Messages {
@@ -270,7 +272,6 @@ func sendMailRequestToSes(ctx context.Context, sesClient *sesv2.Client, waitgrou
 	}
 
 	if mailRequest.Subject == "" && mailRequest.Body == "" {
-		log.Printf("Skipping email with empty subject and body")
 		communicationBus.Errors <- fmt.Errorf("empty subject and body for mail request, message ID: %s", *message.MessageId)
 		communicationBus.ReadMessages <- message
 		return
@@ -357,5 +358,11 @@ func main() {
 		log.SetOutput(os.Stdout)
 	}
 
-	lambda.Start(handler)
+	if _, e := os.LookupEnv("AWS_LAMBDA_RUNTIME_API"); e {
+		lambda.Start(handler)
+	} else {
+		if err := handler(); err != nil {
+			log.Fatalf("Handler error: %v", err)
+		}
+	}
 }
