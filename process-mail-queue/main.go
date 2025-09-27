@@ -197,7 +197,7 @@ func startQueueMessagesCollector(ctx context.Context, sqsClient *sqs.Client, exe
 func startReadMessagesReadHandler(ctx context.Context, sqsClient *sqs.Client, communicationBus *CommunicationBus, execConfig *ExecutionConfig) {
 	go func() {
 		defer communicationBus.MainWorkerGroup.Done()
-		for readMessage := range communicationBus.Messages {
+		for readMessage := range communicationBus.ReadMessages {
 			_, err := sqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      aws.String(execConfig.QueueURL),
 				ReceiptHandle: readMessage.ReceiptHandle,
@@ -258,27 +258,27 @@ func sendMailRequestToSes(ctx context.Context, sesClient *sesv2.Client, waitgrou
 
 	if message.Body == nil || *message.Body == "" {
 		communicationBus.Errors <- fmt.Errorf("empty sqs message body: %s", *message.MessageId)
-		communicationBus.Messages <- message
+		communicationBus.ReadMessages <- message
 		return
 	}
 
 	mailRequest, err := decodeBase64MessageBodyToMailRequest(*message.Body)
 	if err != nil {
 		communicationBus.Errors <- fmt.Errorf("failed to decode message body: %w, message ID: %s", err, *message.MessageId)
-		communicationBus.Messages <- message
+		communicationBus.ReadMessages <- message
 		return
 	}
 
 	if mailRequest.Subject == "" && mailRequest.Body == "" {
 		log.Printf("Skipping email with empty subject and body")
 		communicationBus.Errors <- fmt.Errorf("empty subject and body for mail request, message ID: %s", *message.MessageId)
-		communicationBus.Messages <- message
+		communicationBus.ReadMessages <- message
 		return
 	}
 
 	if len(mailRequest.To) == 0 && len(mailRequest.Cc) == 0 && len(mailRequest.Bcc) == 0 {
 		communicationBus.Errors <- fmt.Errorf("no recipients, message ID: %s", *message.MessageId)
-		communicationBus.Messages <- message
+		communicationBus.ReadMessages <- message
 		return
 	}
 
@@ -309,7 +309,7 @@ func sendMailRequestToSes(ctx context.Context, sesClient *sesv2.Client, waitgrou
 		return
 	}
 
-	communicationBus.Messages <- message
+	communicationBus.ReadMessages <- message
 }
 
 func readEnvFile() {
